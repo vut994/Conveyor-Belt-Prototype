@@ -1,0 +1,1069 @@
+#include "main.h"
+
+/*private definition*/
+#define START GPIOE->IDR&GPIO_Pin_0
+#define STOP GPIOE->IDR&GPIO_Pin_1
+
+static __IO uint32_t TimingDelay;
+
+
+TIM_TimeBaseInitTypeDef TIM_TimeBaseStructure;
+TIM_OCInitTypeDef TIM_OCInitStructure;
+TIM_ICInitTypeDef TIM_ICInitStructure;
+GPIO_InitTypeDef  GPIO_InitStructure;
+
+uint16_t PrescalerValue = 0;
+
+/*for input frequency*/
+uint32_t IcFreq;
+uint32_t DutyCycle ;
+uint32_t puslewidth = 0;
+uint16_t Count = 2800;
+
+/*for PWM buzzer*/
+ uint32_t Count_hi = 0;
+ uint32_t Count_lo = 0;
+extern uint32_t BuzzerFreq;
+
+/*for debounce*/
+int OldStart = 1;
+int NewStart = 1;
+int OldStop = 1;
+int NewStop = 1;
+int startFlag = 0;
+int stopFlag = 0;
+int endPos = 0;
+int startPos = 1;
+
+      /*For sensor*/
+     /* Count_hi = (TIM5_CH3 freq / Desired freq) * DC
+	    = (84 MHz / (1/50 ms))*(14/50000)
+	    = 1176
+   Count_lo = (TIM5_CH3 freq / Desired freq) * (1-DC)
+	    = (84 MHz / (1/50 ms))*(49986/50000)
+	    = 4198824					*/
+ uint32_t Count_hi_sensor = 1175;
+ uint32_t Count_lo_sensor = 4198823;
+extern uint32_t PulseWidth_sensor; 
+float inch;
+int Cx[4];
+
+
+/*Private functions*/
+void TimIcInit(void);
+void ConfigPort(void);
+void LCD_init(void);
+void data_out(unsigned int );
+void command_out(int );
+void StartBlinkBuzzer(int ,int );
+void TimerPWMConfig(void);
+void BuzzerTim(void );
+void SensorTim(void );
+void PwmDutyCycle(void );
+void Delay(__IO uint32_t nTime)   ;
+void SwitchEval(void );
+void PosEval(void );
+void clrscr(void );
+void dispchinitialization(void);
+void dispchrunning(void);
+void dispchhalted(void);
+void dispchstopped(void);
+unsigned char *findNum(int );
+
+
+unsigned char Zero[7] =  {0x0E,0x11,0x19,0x15,0x13,0x11,0x0E};
+unsigned char One[7]  =  {0x04,0x0C,0x04,0x04,0x04,0x04,0x0E};
+unsigned char Two[7]  =  {{0x0E},{0x11},{0x01},{0x02},{0x04},{0x08},{0x1F}};
+unsigned char Three[7]=  {{0x1F},{0x02},{0x04},{0x02},{0x01},{0x11},{0x0E}};
+unsigned char Four[7] = { {0x02},{0x03},{0x0A},{0x12},{0x1F},{0x02},{0x02}};
+unsigned char Five[7] = { {0x1F},{0x10},{0x1E},{0x01},{0x01},{0x11},{0x0E}};
+unsigned char Six[7]  = { {0x03},{0x08},{0x10},{0x1E},{0x11},{0x11},{0x0E}};
+unsigned char Seven[7]= { {0x1F},{0x01},{0x02},{0x04},{0x08},{0x08},{0x08}};
+unsigned char Eight[7]= { {0x0E},{0x11},{0x11},{0x0E},{0x11},{0x11},{0x0E}};
+unsigned char Nine[7] = { {0x0E},{0x11},{0x11},{0x0F},{0x01},{0x02},{0x0C}};
+
+unsigned char ChA[7]  = { {0x0E},{0x11},{0x11},{0x1f},{0x11},{0x11},{0x11}};                    /* SmallFontA */
+unsigned char ChD[7]  = { {0x1C},{0x12},{0x11},{0x11},{0x11},{0x12},{0x1C}};                    /* SmallFontD */
+unsigned char ChE[7]  = { {0x1F}, {0x10}, {0x10}, {0x1E}, {0x10}, {0x10}, {0x1F}};              /* SmallFontE */
+unsigned char ChH[7]  = {  {0x11}, {0x11}, {0x11}, {0x1F}, {0x11}, {0x11}, {0x11}};             /* SmallFontH */
+unsigned char ChR[7] = {  {0x1F}, {0x11}, {0x11}, {0x1E}, {0x14}, {0x12}, {0x11}};              /* SmallFontR */
+unsigned char ChS[7]  = {  {0x0F}, {0x10}, {0x10}, {0x0E}, {0x01}, {0x01}, {0x1E}};             /* SmallFontS */
+unsigned char ChT[7]  = {  {0x1F}, {0x04}, {0x04}, {0x04}, {0x04}, {0x04}, {0x04}};             /* SmallFontT */
+unsigned char ChU[7]  = {  {0x11}, {0x11}, {0x11}, {0x11}, {0x11}, {0x11}, {0x0E}};             /* SmallFontU */
+unsigned char ChI[7]  = {  {0x0E}, {0x04}, {0x04}, {0x04}, {0x04}, {0x04}, {0x0E}};             /* SmallFontI */
+unsigned char ChL[7]  = {  {0x10}, {0x10}, {0x10}, {0x10}, {0x10}, {0x10}, {0x1F}};             /* SmallFontL */
+unsigned char ChG[7]  = {  {0x0E}, {0x11}, {0x10}, {0x17}, {0x11}, {0x11}, {0x0E}};             /* SmallFontG */
+unsigned char ChN[7]  = {  {0x11}, {0x11}, {0x19}, {0x15}, {0x13}, {0x11}, {0x11}};             /* SmallFontN */
+unsigned char ChO[7]  = {  {0x0E}, {0x11}, {0x11}, {0x11}, {0x11}, {0x11}, {0x0E}};             /* SmallFontO */
+unsigned char ChP[7]  = {  {0x1E}, {0x11}, {0x11}, {0x1E}, {0x10}, {0x10}, {0x10}};             /* SmallFontP */
+unsigned char ChZ[7]  = {  {0x1F}, {0x01}, {0x02}, {0x04}, {0x08}, {0x10}, {0x1F}};             /* SmallFontP */
+unsigned char equal[7] = {  {0x00}, {0x00}, {0x1F}, {0x00}, {0x1F}, {0x00}, {0x00}};            /* SmallFontEqual */
+unsigned char dot[7] = {  {0x00}, {0x00}, {0x00}, {0x00}, {0x00}, {0x0C}, {0x0C}};              /* SmallFontPeriod */
+
+ int main(void)
+{
+  
+  if (SysTick_Config((SystemCoreClock /2) / 1000))   //to generate 1ms interrupt
+  {
+    while (1);
+  }
+  
+  ConfigPort();
+  BuzzerTim();
+  TimIcInit();
+  TimerPWMConfig();
+  SensorTim();
+  LCD_init();
+  command_out(0x36);
+  Delay(1);
+  Delay(1);
+  command_out(0x41);
+  Delay(1);
+  clrscr();
+  dispchinitialization(); 
+  
+  while (1)
+  {
+   SwitchEval(); 
+   PosEval();
+  }
+}
+
+void SwitchEval(void )
+{
+    NewStart = START;
+    NewStop = ((STOP) >> 1);
+    if(NewStart != OldStart)
+    {
+      Delay(10);
+        clrscr();
+        dispchrunning( );
+      OldStart = NewStart;
+      startFlag = 1;
+      stopFlag = 0;
+      if(OldStart == 0)
+      {
+        Count_hi = 8400;
+        Count_lo = 8400; 
+        StartBlinkBuzzer(5,1000);  
+        if(startPos == 1)
+        {
+          TIM_Cmd(TIM4, ENABLE);
+          TIM_ITConfig(TIM4, TIM_IT_CC2, ENABLE);
+        }
+        
+        if(endPos == 1)
+        {
+          TIM_Cmd(TIM4, ENABLE);
+          TIM_ITConfig(TIM4, TIM_IT_CC1, ENABLE);
+        }
+      }
+    }
+    if(NewStop != OldStop)
+    {
+      stopFlag = 1;
+      startFlag = 0;
+      Delay(10);
+      OldStop = NewStop;
+      if(OldStop == 0)
+      {
+        PwmDutyCycle(); 
+        Count_hi = 14000;
+        Count_lo = 14000;
+        StartBlinkBuzzer(8,500);
+      }
+    }
+}
+
+void PosEval(void )
+{
+  inch = PulseWidth_sensor/148.0;
+  if(inch == 5)
+  {
+    TIM_Cmd(TIM4, DISABLE);
+      if(TIM_GetITStatus(TIM4, TIM_IT_CC2) != RESET)
+      {
+      TIM_ITConfig(TIM4, TIM_IT_CC2, DISABLE);
+      }
+      
+      if(TIM_GetITStatus(TIM4, TIM_IT_CC1) != RESET)
+      {
+      TIM_ITConfig(TIM4, TIM_IT_CC1, DISABLE);
+      }
+    StartBlinkBuzzer(8,500);
+        clrscr();
+    dispchhalted( );
+    Delay(5000);
+    TIM_Cmd(TIM4, ENABLE);
+      if(TIM_GetITStatus(TIM4, TIM_IT_CC2) == RESET)
+      {
+        if(startPos == 1)
+      TIM_ITConfig(TIM4, TIM_IT_CC2, ENABLE);
+      }
+      
+      if(TIM_GetITStatus(TIM4, TIM_IT_CC1) == RESET)
+      {
+        if(endPos == 1)
+      TIM_ITConfig(TIM4, TIM_IT_CC1, ENABLE);
+      }
+    StartBlinkBuzzer(5,1000);
+  }
+  if(inch == 2.5)
+  {
+    TIM_Cmd(TIM4, DISABLE);
+      if(TIM_GetITStatus(TIM4, TIM_IT_CC2) != RESET)
+      {
+      TIM_ITConfig(TIM4, TIM_IT_CC2, DISABLE);
+      }
+      
+      if(TIM_GetITStatus(TIM4, TIM_IT_CC1) != RESET)
+      {
+      TIM_ITConfig(TIM4, TIM_IT_CC1, DISABLE);
+      }
+    StartBlinkBuzzer(8,500);
+        clrscr();
+    dispchhalted( );
+    Delay(5000);
+    TIM_Cmd(TIM4, ENABLE);
+      if(TIM_GetITStatus(TIM4, TIM_IT_CC2) == RESET)
+      {
+       if(startPos == 1)
+      TIM_ITConfig(TIM4, TIM_IT_CC2, ENABLE);
+      }
+      
+      if(TIM_GetITStatus(TIM4, TIM_IT_CC1) == RESET)
+      {
+        if(endPos == 1)
+      TIM_ITConfig(TIM4, TIM_IT_CC1, ENABLE);
+      }
+    StartBlinkBuzzer(5,1000);
+  }
+  if(inch == 3)               //End position, Stop forward. calibrate
+  {
+      clrscr();
+      dispchstopped( );
+    TIM_Cmd(TIM4, DISABLE);
+    TIM_ITConfig(TIM4, TIM_IT_CC2, DISABLE);
+    StartBlinkBuzzer(8,500);
+    endPos = 1;
+    startPos = 0;
+  }
+  if(inch == 12.5)               //start position, Stop reverse. calibrate
+  {
+    TIM_Cmd(TIM4, DISABLE);
+    TIM_ITConfig(TIM4, TIM_IT_CC1, DISABLE);
+    StartBlinkBuzzer(8,500);
+    startPos = 1;
+    endPos = 0;
+    clrscr();
+    dispchstopped( );
+  }
+}
+
+
+void StartBlinkBuzzer(int blinks,int delay)
+{
+  int i;             
+  
+        TIM_Cmd(TIM3, ENABLE);
+        TIM_ITConfig(TIM3, TIM_IT_CC1, ENABLE);
+  for(i = 0; i < blinks; i++)
+  {
+    GPIO_SetBits(GPIOE, GPIO_Pin_2);
+    Delay(delay);
+    GPIO_ResetBits(GPIOE, GPIO_Pin_2);
+    Delay(delay);
+  }
+  
+        TIM_Cmd(TIM3, DISABLE);
+        TIM_ITConfig(TIM3, TIM_IT_CC1, DISABLE); 
+}
+
+
+void dispchinitialization( )
+{
+  int x = 0x88,y = 0x88,j,val,val1;
+  
+  for(j=0;j<7;j++)      //To display characters on LCD such as
+  {                     //INITIALIZATION 
+   command_out(x);
+   command_out(y);
+   val=ChI[j];
+   data_out(val);
+   val1=ChN[j];
+   data_out(val1);
+   x++;
+  }
+x = 0x88;
+  y++;
+  for(j=0;j<7;j++)
+  {
+   command_out(x);
+   command_out(y);
+   val=ChI[j];
+   data_out(val);
+   val1=ChT[j];
+   data_out(val1);
+   x++;
+  }
+x = 0x88;
+  y++;
+  for(j=0;j<7;j++)
+  {
+   command_out(x);
+   command_out(y);
+   val=ChI[j];
+   data_out(val);
+   val1=ChA[j];
+   data_out(val1);
+   x++;
+  }
+x = 0x88;
+  y++;
+  for(j=0;j<7;j++)
+  {
+   command_out(x);
+   command_out(y);
+   val=ChL[j];
+   data_out(val);
+   val1=ChI[j];
+   data_out(val1);
+   x++;
+  }
+x = 0x88;
+  y++;
+  for(j=0;j<7;j++)
+  {
+   command_out(x);
+   command_out(y);
+   val=ChZ[j];
+   data_out(val);
+   val1=ChI[j];
+   data_out(val1);
+   x++;
+  }
+  x = 0x88;
+  y++;
+  for(j=0;j<7;j++)
+  {
+   command_out(x);
+   command_out(y);
+   val=ChN[j];
+   data_out(val);
+   val1=ChG[j];
+   data_out(val1);
+   x++;
+  }
+}
+
+void dispchrunning( )
+{
+  int x = 0x88,y = 0x88,j,val,val1;
+  
+  for(j=0;j<7;j++)      //To display characters on LCD such as
+  {                     //INITIALIZATION 
+   command_out(x);
+   command_out(y);
+   val=ChR[j];
+   data_out(val);
+   val1=ChU[j];
+   data_out(val1);
+   x++;
+  }
+x = 0x88;
+  y++;
+  for(j=0;j<7;j++)
+  {
+   command_out(x);
+   command_out(y);
+   val=ChN[j];
+   data_out(val);
+   val1=ChN[j];
+   data_out(val1);
+   x++;
+  }
+ x = 0x88;
+  y++;
+  for(j=0;j<7;j++)
+  {
+   command_out(x);
+   command_out(y);
+   val=ChI[j];
+   data_out(val);
+   val1=ChN[j];
+   data_out(val1);
+   x++;
+  } 
+   x = 0x88;
+  y++;
+  for(j=0;j<7;j++)
+  {
+   command_out(x);
+   command_out(y);
+   val=ChG[j];
+   data_out(val);
+   x++;
+  }
+}
+
+void dispchhalted( )
+{
+  int x = 0x88,y = 0x88,j,val,val1;
+  unsigned char *ptr,*ptr1,*ptr2,*ptr3;
+  Cx[0] = ((int) (inch*10))%10;
+  ptr3 = findNum(Cx[0]);
+  Cx[1] = ((int) inch)%10;
+  ptr2 = findNum(Cx[1]);
+  Cx[2] = (((int) inch)/10)%10;
+  ptr1 = findNum(Cx[2]);
+  Cx[3] = (((int) inch)/100)%10;
+  ptr = findNum(Cx[3]);
+  
+
+
+  for(j=0;j<7;j++)      //To display characters on LCD such as
+  {                     //INITIALIZATION 
+   command_out(x);
+   command_out(y);
+   val=ChH[j];
+   data_out(val);
+   val1=ChA[j];
+   data_out(val1);
+   x++;
+  }
+x = 0x88;
+  y++;
+  for(j=0;j<7;j++)
+  {
+   command_out(x);
+   command_out(y);
+   val=ChL[j];
+   data_out(val);
+   val1=ChT[j];
+   data_out(val1);
+   x++;
+  }
+x = 0x88;
+  y++;
+  for(j=0;j<7;j++)
+  {
+   command_out(x);
+   command_out(y);
+   val=ChE[j];
+   data_out(val);
+   val1=ChD[j];
+   data_out(val1);
+   x++;
+  }
+  
+  x = 0x88;
+  y++;
+  for(j=0;j<7;j++)
+  {
+   command_out(x);
+   command_out(y);
+   val=equal[j];
+   data_out(val);
+   data_out(0x00);
+   x++;
+  }
+  
+  if(Cx[3] == 0 && Cx[2] == 0 )
+  {
+    x = 0x88;
+    y++;
+    for(j=0;j<7;j++)
+    {
+     command_out(x);
+     command_out(y);
+    
+     data_out(0x00);
+     data_out(0x00);
+     x++;
+    }
+    
+     x = 0x88;
+    y++;
+    for(j=0;j<7;j++)
+    {
+     command_out(x);
+     command_out(y);
+     val = ptr2[j];
+     data_out(val);
+     val1 = dot[j];
+     data_out(val1);
+     x++;
+    }
+     x = 0x88;
+    y++;
+    for(j=0;j<7;j++)
+    {
+     command_out(x);
+     command_out(y);
+     val = ptr3[j];
+     data_out(val);
+     data_out(0x00);
+     x++;
+    }
+  }
+
+  else if(Cx[3] == 0 && Cx[2] != 0 )
+  {
+     x = 0x88;
+    y++;
+    for(j=0;j<7;j++)
+    {
+     command_out(x);
+     command_out(y);
+    
+     data_out(0x00);
+     val1 = ptr1[j];
+     data_out(val1);
+     x++;
+    }
+    
+     x = 0x88;
+    y++;
+    for(j=0;j<7;j++)
+    {
+     command_out(x);
+     command_out(y);
+     val = ptr2[j];
+     data_out(val);
+     val1 = dot[j];
+     data_out(val1);
+     x++;
+    }
+     x = 0x88;
+    y++;
+    for(j=0;j<7;j++)
+    {
+     command_out(x);
+     command_out(y);
+     val = ptr3[j];
+     data_out(val);
+     data_out(0x00);
+     x++;
+    }
+  }
+
+  else if(Cx[3] != 0 && Cx[2] != 0 && Cx[1] != 0)
+  {
+    x = 0x88;
+    y++;
+    for(j=0;j<7;j++)
+    {
+     command_out(x);
+     command_out(y);
+     val = ptr[j];
+     data_out(val);
+     val1 = ptr1[j];
+     data_out(val1);
+     x++;
+    }
+    
+     x = 0x88;
+    y++;
+    for(j=0;j<7;j++)
+    {
+     command_out(x);
+     command_out(y);
+     val = ptr2[j];
+     data_out(val);
+     val1 = dot[j];
+     data_out(val1);
+     x++;
+    }
+     x = 0x88;
+    y++;
+    for(j=0;j<7;j++)
+    {
+     command_out(x);
+     command_out(y);
+     val = ptr3[j];
+     data_out(val);
+     data_out(0x00);
+     x++;
+    }
+}
+
+x = 0x88;
+  y++;
+  for(j=0;j<7;j++)
+  {
+   command_out(x);
+   command_out(y);
+   val=ChI[j];
+   data_out(val);
+   val1=ChN[j];
+   data_out(val1);
+   x++;
+  }
+   
+}
+
+unsigned char *findNum(int frq) //function to find the number  
+{
+      if(frq == 0)
+      return Zero;
+      else if(frq == 1)
+      return One;
+      else if(frq == 2)
+      return Two;
+      else if(frq == 3)
+      return Three;
+      else if(frq == 4)
+      return Four;
+      else if(frq == 5)
+      return Five;
+      else if(frq == 6)
+      return Six;
+      else if(frq == 7)
+      return Seven;
+      else if(frq == 8)
+      return Eight;
+      else if(frq == 9)
+      return Nine;
+      else 
+        return 0; 
+}
+
+
+void dispchstopped( )
+{
+  int x = 0x88,y = 0x88,j,val,val1;
+  
+  for(j=0;j<7;j++)      //To display characters on LCD such as
+  {                     //INITIALIZATION 
+   command_out(x);
+   command_out(y);
+   val=ChS[j];
+   data_out(val);
+   val1=ChT[j];
+   data_out(val1);
+   x++;
+  }
+x = 0x88;
+  y++;
+  for(j=0;j<7;j++)
+  {
+   command_out(x);
+   command_out(y);
+   val=ChO[j];
+   data_out(val);
+   val1=ChP[j];
+   data_out(val1);
+   x++;
+  }
+x = 0x88;
+  y++;
+  for(j=0;j<7;j++)
+  {
+   command_out(x);
+   command_out(y);
+   val=ChP[j];
+   data_out(val);
+   val1=ChE[j];
+   data_out(val1);
+   x++;
+  }
+  x = 0x88;
+  y++;
+  for(j=0;j<7;j++)
+  {
+   command_out(x);
+   command_out(y);
+   val=ChD[j];
+   data_out(val);
+   x++;
+  }
+}
+
+void clrscr(void)       //function to clear display 
+{
+  int i,j;
+   
+ for(j=0x80;j<0xa1;j++) 
+   {
+   for(i=0x80;i<0x90;i++)
+    {
+      command_out(j);
+      command_out(i);
+      data_out(0x00);
+      data_out(0x00);
+    }
+   }
+   Delay(1); 
+}
+
+void BuzzerTim(void )
+{
+  NVIC_InitTypeDef NVIC_InitStructure;
+    /* TIM5 clock enable */
+  RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM3, ENABLE);
+
+  /* GPIOA peripheral clock enable */
+  RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOA, ENABLE);
+
+  /* Configure PA2 to alternate function 2 (TIM5_CH3) */ /*change channel*/
+  GPIO_InitStructure.GPIO_Pin=GPIO_Pin_6;
+  GPIO_InitStructure.GPIO_Mode=GPIO_Mode_AF;
+  GPIO_InitStructure.GPIO_Speed=GPIO_Speed_100MHz;
+  GPIO_InitStructure.GPIO_OType=GPIO_OType_PP;
+  GPIO_InitStructure.GPIO_PuPd=GPIO_PuPd_UP;
+  GPIO_Init(GPIOA, & GPIO_InitStructure);
+
+  /* Connect TIM5 channels to PA2-AF2 */
+  GPIO_PinAFConfig(GPIOA, GPIO_PinSource6, GPIO_AF_TIM3);
+
+  /* Enable TIM5 global interrupt and set priority to 0 */
+  NVIC_InitStructure.NVIC_IRQChannel=TIM3_IRQn;
+  NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority=0x00;
+  NVIC_InitStructure.NVIC_IRQChannelSubPriority=0x00;
+  NVIC_InitStructure.NVIC_IRQChannelCmd=ENABLE;
+  NVIC_Init(&NVIC_InitStructure);
+
+  /* Configure Time Base for TIM5 */
+  TIM_TimeBaseStructure.TIM_Period=0xFFFFFFFF;
+  TIM_TimeBaseStructure.TIM_Prescaler=0;
+  TIM_TimeBaseStructure.TIM_ClockDivision=0;
+  TIM_TimeBaseStructure.TIM_CounterMode=TIM_CounterMode_Up;
+  TIM_TimeBaseInit(TIM3, &TIM_TimeBaseStructure);
+
+  /* Configure Prescaler for TIM5 */
+  TIM_PrescalerConfig(TIM3, PrescalerValue, TIM_PSCReloadMode_Immediate);
+
+  /* Configure TIM5 for output capture mode at Channel 3 */
+  TIM_OCInitStructure.TIM_OCMode = TIM_OCMode_Toggle;
+  TIM_OCInitStructure.TIM_OutputState = TIM_OutputState_Enable;
+  TIM_OCInitStructure.TIM_Pulse = Count_hi;
+  TIM_OCInitStructure.TIM_OCPolarity = TIM_OCPolarity_High;
+  TIM_OC1Init(TIM3, &TIM_OCInitStructure);
+  TIM_OC1PreloadConfig(TIM3, TIM_OCPreload_Disable);
+  
+}
+
+void TimIcInit(void)
+{
+  NVIC_InitTypeDef NVIC_InitStructure;
+ /* TIM5 clock enable */
+ RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM2, ENABLE);
+ /* GPIOA peripheral clock enable */
+ RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOB, ENABLE);
+ /* Configure PA1 to alternate function 2 (TIM5_CH2) */
+ GPIO_InitStructure.GPIO_Pin=GPIO_Pin_10;
+ GPIO_InitStructure.GPIO_Mode=GPIO_Mode_AF;
+ GPIO_InitStructure.GPIO_Speed=GPIO_Speed_100MHz;
+ GPIO_InitStructure.GPIO_OType=GPIO_OType_PP;
+ GPIO_InitStructure.GPIO_PuPd=GPIO_PuPd_UP;
+ GPIO_Init(GPIOB, & GPIO_InitStructure);
+ /* Connect TIM5 channels to PA1-AF2 */
+ GPIO_PinAFConfig(GPIOB, GPIO_PinSource10, GPIO_AF_TIM2);
+
+ /* Configure Time Base for TIM5 */
+ 
+ TIM_TimeBaseStructure.TIM_Period=0xffffffff;
+ TIM_TimeBaseStructure.TIM_Prescaler=0;
+ TIM_TimeBaseStructure.TIM_ClockDivision=0;
+ TIM_TimeBaseStructure.TIM_CounterMode=TIM_CounterMode_Up;
+ TIM_TimeBaseInit(TIM2, &TIM_TimeBaseStructure);
+
+ /* Configure TIM5 for input capture mode at Channel 2 */
+ TIM_ICInitStructure.TIM_Channel = TIM_Channel_3;
+ TIM_ICInitStructure.TIM_ICPolarity = TIM_ICPolarity_Rising;
+ TIM_ICInitStructure.TIM_ICSelection = TIM_ICSelection_DirectTI;
+ TIM_ICInitStructure.TIM_ICPrescaler = TIM_ICPSC_DIV1;
+ TIM_ICInitStructure.TIM_ICFilter = 0x0;
+ TIM_ICInit(TIM2, &TIM_ICInitStructure);
+ 
+  /* Enable TIM5 global interrupt and set priority to 0 */
+ NVIC_InitStructure.NVIC_IRQChannel=TIM2_IRQn;
+ NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority=0x00;
+ NVIC_InitStructure.NVIC_IRQChannelSubPriority=0x00;
+ NVIC_InitStructure.NVIC_IRQChannelCmd=ENABLE;
+ NVIC_Init(&NVIC_InitStructure);
+ 
+ /* Enable TIM5 counter and IT */
+ TIM_Cmd(TIM2, ENABLE);
+ TIM_ITConfig(TIM2, TIM_IT_CC3, ENABLE);
+}
+
+void TimerPWMConfig(void)
+{
+  NVIC_InitTypeDef NVIC_InitStructure;
+  /* TIM4 clock enable */
+  RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM4, ENABLE);
+  
+  /* GPIOB peripheral clock enable */
+  RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOB, ENABLE);
+  
+  /* Configure PB7 to alternate function 2 (TIM4_CH2) for INPUT signal */
+  GPIO_InitStructure.GPIO_Pin = GPIO_Pin_7 | GPIO_Pin_6;
+  GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF;
+  GPIO_InitStructure.GPIO_Speed = GPIO_Speed_100MHz;
+  GPIO_InitStructure.GPIO_OType = GPIO_OType_PP;
+  GPIO_InitStructure.GPIO_PuPd = GPIO_PuPd_UP;
+  GPIO_Init(GPIOB, & GPIO_InitStructure);
+  
+  /* Connect TIM4 channels to PB7-AF2 */
+  GPIO_PinAFConfig(GPIOB, GPIO_PinSource7, GPIO_AF_TIM4);
+  GPIO_PinAFConfig(GPIOB, GPIO_PinSource6, GPIO_AF_TIM4);
+  /* Enable TIM4 global interrupt and set priority to 0 */
+  NVIC_InitStructure.NVIC_IRQChannel = TIM4_IRQn;
+  NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 0x01;
+  NVIC_InitStructure.NVIC_IRQChannelSubPriority = 0x00;
+  NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
+  NVIC_Init(&NVIC_InitStructure);
+  
+  /* Configure Time Base for TIM4 */
+  TIM_TimeBaseStructure.TIM_Period = (Count - 1); 
+  TIM_TimeBaseStructure.TIM_Prescaler = 0; 
+  TIM_TimeBaseStructure.TIM_ClockDivision = 0; 
+  TIM_TimeBaseStructure.TIM_CounterMode = TIM_CounterMode_Up; 
+  TIM_TimeBaseInit(TIM4, &TIM_TimeBaseStructure);
+  
+  /* Configure TIM4 for PWM mode at Channel 2 */
+  TIM_OCInitStructure.TIM_OCMode = TIM_OCMode_PWM1; 
+  TIM_OCInitStructure.TIM_OutputState = TIM_OutputState_Enable; 
+  TIM_OCInitStructure.TIM_Pulse = 1400;
+  TIM_OCInitStructure.TIM_OCPolarity = TIM_OCPolarity_High; 
+  TIM_OC2Init(TIM4, &TIM_OCInitStructure);
+  TIM_OC2PreloadConfig(TIM4, TIM_OCPreload_Disable);
+  
+   TIM_OCInitStructure.TIM_OCMode = TIM_OCMode_PWM1; 
+  TIM_OCInitStructure.TIM_OutputState = TIM_OutputState_Enable; 
+  TIM_OCInitStructure.TIM_Pulse = 1400;
+  TIM_OCInitStructure.TIM_OCPolarity = TIM_OCPolarity_High; 
+  TIM_OC1Init(TIM4, &TIM_OCInitStructure);
+  TIM_OC1PreloadConfig(TIM4, TIM_OCPreload_Disable);
+  
+  /* Enable TIM5 counter and IT */
+  TIM_Cmd(TIM4, ENABLE);
+  
+  TIM_ITConfig(TIM4, TIM_IT_CC1, ENABLE);
+}
+
+void SensorTim(void )
+{
+   NVIC_InitTypeDef NVIC_InitStructure;
+  /*For Ultrasonic sensor trigger pulse*/
+   /* TIM5 clock enable */
+  RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM5, ENABLE);
+
+  /* GPIOA peripheral clock enable */
+  RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOA, ENABLE);
+
+  /* Configure PA2 to alternate function 2 (TIM5_CH3) */
+  GPIO_InitStructure.GPIO_Pin=GPIO_Pin_2;
+  GPIO_InitStructure.GPIO_Mode=GPIO_Mode_AF;
+  GPIO_InitStructure.GPIO_Speed=GPIO_Speed_100MHz;
+  GPIO_InitStructure.GPIO_OType=GPIO_OType_PP;
+  GPIO_InitStructure.GPIO_PuPd=GPIO_PuPd_UP;
+  GPIO_Init(GPIOA, & GPIO_InitStructure);
+
+  /* Connect TIM5 channels to PA2-AF2 */
+  GPIO_PinAFConfig(GPIOA, GPIO_PinSource2, GPIO_AF_TIM5);
+
+  /* Enable TIM5 global interrupt and set priority to 0 */
+  NVIC_InitStructure.NVIC_IRQChannel=TIM5_IRQn;
+  NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority=0x00;
+  NVIC_InitStructure.NVIC_IRQChannelSubPriority=0x00;
+  NVIC_InitStructure.NVIC_IRQChannelCmd=ENABLE;
+  NVIC_Init(&NVIC_InitStructure);
+
+  /* Configure Time Base for TIM5 */
+  TIM_TimeBaseStructure.TIM_Period=0xFFFFFFFF;
+  TIM_TimeBaseStructure.TIM_Prescaler=0;
+  TIM_TimeBaseStructure.TIM_ClockDivision=0;
+  TIM_TimeBaseStructure.TIM_CounterMode=TIM_CounterMode_Up;
+  TIM_TimeBaseInit(TIM5, &TIM_TimeBaseStructure);
+
+  /* Configure Prescaler for TIM5 */
+  //TIM_PrescalerConfig(TIM5, PrescalerValue, TIM_PSCReloadMode_Immediate);
+
+  /* Configure TIM5 for output capture mode at Channel 3 */
+  TIM_OCInitStructure.TIM_OCMode = TIM_OCMode_Toggle;
+  TIM_OCInitStructure.TIM_OutputState = TIM_OutputState_Enable;
+  TIM_OCInitStructure.TIM_Pulse = Count_hi_sensor;
+  TIM_OCInitStructure.TIM_OCPolarity = TIM_OCPolarity_High;
+  TIM_OC3Init(TIM5, &TIM_OCInitStructure);
+  TIM_OC3PreloadConfig(TIM5, TIM_OCPreload_Disable);
+
+  /* Enable TIM5 counter and IT */
+  TIM_Cmd(TIM5, ENABLE);
+  TIM_ITConfig(TIM5, TIM_IT_CC3, ENABLE);
+  
+  /*For Ultrasonic sensor echo input capture*/
+  /* TIM5 clock enable */
+  RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM5, ENABLE);
+
+  /* GPIOA peripheral clock enable */
+  RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOA, ENABLE);
+
+  /* Configure PA3 to alternate function 2 (TIM5_CH4) */
+  GPIO_InitStructure.GPIO_Pin=GPIO_Pin_3;
+  GPIO_InitStructure.GPIO_Mode=GPIO_Mode_AF;
+  GPIO_InitStructure.GPIO_Speed=GPIO_Speed_100MHz;
+  GPIO_InitStructure.GPIO_OType=GPIO_OType_PP;
+  GPIO_InitStructure.GPIO_PuPd=GPIO_PuPd_UP;
+  GPIO_Init(GPIOA, & GPIO_InitStructure);
+
+  /* Connect TIM5 channels to PA3-AF2 */
+  GPIO_PinAFConfig(GPIOA, GPIO_PinSource3, GPIO_AF_TIM5);
+
+  /* Enable TIM5 global interrupt and set priority to 0 */
+  NVIC_InitStructure.NVIC_IRQChannel=TIM5_IRQn;
+  NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority=0x00;
+  NVIC_InitStructure.NVIC_IRQChannelSubPriority=0x00;
+  NVIC_InitStructure.NVIC_IRQChannelCmd=ENABLE;
+  NVIC_Init(&NVIC_InitStructure);
+
+  /* Configure TIM5 for input capture mode at Channel 4 */
+  TIM_ICInitStructure.TIM_Channel = TIM_Channel_4;
+  TIM_ICInitStructure.TIM_ICPolarity = TIM_ICPolarity_BothEdge;
+  TIM_ICInitStructure.TIM_ICSelection = TIM_ICSelection_DirectTI;
+  TIM_ICInitStructure.TIM_ICPrescaler = TIM_ICPSC_DIV1;
+  TIM_ICInitStructure.TIM_ICFilter = 0x0;
+  TIM_ICInit(TIM5, &TIM_ICInitStructure);
+
+  /* Enable TIM5 counter and IT */
+  TIM_Cmd(TIM5, ENABLE);
+  TIM_ITConfig(TIM5, TIM_IT_CC4, ENABLE);
+  
+}
+
+void PwmDutyCycle(void )
+{
+  if(IcFreq <= 4898)
+    DutyCycle = 90;
+  else if(IcFreq >=4899 && IcFreq <= 5098)
+    DutyCycle = 80;
+  else if(IcFreq >=5099 && IcFreq <= 5298)
+    DutyCycle = 70;
+  else if(IcFreq >=5299 && IcFreq <= 5498)
+    DutyCycle = 60;
+  else if(IcFreq >=5499 && IcFreq <= 5698)
+    DutyCycle = 50;
+  else if(IcFreq >=5699 && IcFreq <= 5898)
+    DutyCycle = 40;
+  else if(IcFreq >=5899 && IcFreq <= 6098)
+    DutyCycle = 30;
+  else if(IcFreq >=6099 && IcFreq <= 6298)
+    DutyCycle = 20;
+  else if(IcFreq >=6299)
+    DutyCycle = 10;
+}
+
+void ConfigPort(void)
+{
+  GPIO_InitTypeDef GPIO_InitStructure;
+  RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOD, ENABLE);
+  /* Configure PD0-7 pin as ouput */
+  GPIO_InitStructure.GPIO_Mode = GPIO_Mode_OUT;
+  GPIO_InitStructure.GPIO_PuPd = GPIO_PuPd_NOPULL; m2
+  GPIO_InitStructure.GPIO_Pin = GPIO_Pin_7 | GPIO_Pin_6 | GPIO_Pin_5 | GPIO_Pin_4 | GPIO_Pin_3 | GPIO_Pin_2 | GPIO_Pin_1 | GPIO_Pin_0 | GPIO_Pin_12;
+  GPIO_Init(GPIOD, &GPIO_InitStructure);
+  
+  RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOB, ENABLE);
+  /* Configure PB0-3 pin as ouput */
+  GPIO_InitStructure.GPIO_Mode = GPIO_Mode_OUT;
+  GPIO_InitStructure.GPIO_PuPd = GPIO_PuPd_NOPULL;
+  GPIO_InitStructure.GPIO_Pin = GPIO_Pin_3 | GPIO_Pin_2 | GPIO_Pin_1 | GPIO_Pin_0;
+  GPIO_Init(GPIOB, &GPIO_InitStructure);
+  
+  RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOE, ENABLE);
+  /* Configure PB0-3 pin as ouput */
+  GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IN;
+  GPIO_InitStructure.GPIO_PuPd = GPIO_PuPd_NOPULL;
+  GPIO_InitStructure.GPIO_Pin = GPIO_Pin_1 | GPIO_Pin_0;
+  GPIO_Init(GPIOE, &GPIO_InitStructure);
+  
+  GPIO_InitStructure.GPIO_Mode = GPIO_Mode_OUT;
+  GPIO_InitStructure.GPIO_PuPd = GPIO_PuPd_NOPULL;
+  GPIO_InitStructure.GPIO_Pin = GPIO_Pin_3 | GPIO_Pin_2 ;
+  GPIO_Init(GPIOE, &GPIO_InitStructure);
+}
+
+void command_out(int c)
+{
+  GPIOB->BSRRH = GPIO_Pin_1; /*set pin RS low*/
+  GPIOB->BSRRH = GPIO_Pin_2; /*set pin R/W low*/
+  
+  Delay(1);
+  GPIOD->ODR = c;            /*send instruction to PD7 - PD0*/
+
+  Delay(1);                  /* >10 ns delay*/
+  GPIOB->BSRRL = GPIO_Pin_3; /*set pin E high*/
+ 
+  Delay(1);                  /* >140 ns delay (T_pw)*/
+  GPIOB->BSRRH = GPIO_Pin_3; /*set pin E low*/
+
+  Delay(1);                  /* >20 ns delay*/
+  GPIOD->ODR = 0x00; 
+  Delay(1);
+}
+
+/* Sequence for sending data to LCD (ST7920 pg 28) */ 
+void data_out(unsigned int d)
+{
+  GPIOB->BSRRL = GPIO_Pin_1; /*set pin RS high*/
+  GPIOB->BSRRH = GPIO_Pin_2; /*set pin R/W low*/
+  
+  Delay(1);
+  GPIOD->ODR = d;            /*send DATA to PD7 - PD0*/
+ 
+  Delay(1);
+  GPIOB->BSRRL = GPIO_Pin_3; /*set pin E high*/
+
+  Delay(1);
+  GPIOB->BSRRH = GPIO_Pin_3;  /*set pin E low*/
+  
+  Delay(1);
+  GPIOD->ODR = 0x00; 
+  GPIOB->BSRRH = GPIO_Pin_1; /*set pin RS low*/
+
+  Delay(1);
+} 
+
+
+/* Initialize sequence (ST7920 pg 28) */ 
+void LCD_init(void)
+{
+   
+  GPIOB->ODR = 0x00;
+  GPIOD->ODR = 0x00;            /*set all pins to 0 */
+  Delay(40);
+  GPIOB->BSRRL = GPIO_Pin_0;    /*set RST high*/
+  
+  Delay(1);                     /* >10 us delay RST*/
+  command_out(0x30);               /*function set to 8 bit parallel interface*/
+
+  Delay(1);                          /* >100 us delay*/
+  command_out(0x34);               /*function set ST7920, basic instruction set */
+ 
+  Delay(1);                              /* >72 us delay*/
+  command_out(0x0F);               /*display ON/OFF control */
+
+  Delay(1);                               /* >100 us delay*/
+  command_out(0x01);               /*display clear */
+  
+  Delay(10);                            /* >10 ms delay*/
+  command_out(0x06);               /*entry mode set */
+ 
+  Delay(1);                              /* >72 us delay*/
+  
+}
+
+void Delay(__IO uint32_t nTime)                 /*Function to generate Delay in ms*/
+{
+  TimingDelay = nTime;
+  while(TimingDelay != 0);
+}
+
+void TimingDelay_Decrement(void)                
+{
+  if (TimingDelay != 0)
+  {
+    TimingDelay--;
+  }
+}

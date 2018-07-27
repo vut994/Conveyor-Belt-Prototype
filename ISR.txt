@@ -1,0 +1,178 @@
+#include "stm32f4xx_it.h"
+
+void TimingDelay_Decrement(void);
+
+/*for input frequency computation*/
+uint32_t uhIC3ReadValue1 = 0;
+uint32_t uhIC3ReadValue2 = 0;
+uint32_t uhIC3ReadValue3 = 0;
+uint16_t uhCaptureNumber = 0;
+uint32_t uwCapture = 0;
+
+ /*for buzzer*/
+uint32_t Counter = 0;
+uint8_t duty_flg = 0;
+extern  uint32_t Count_hi;
+extern  uint32_t Count_lo;
+uint32_t BuzzerFreq = 0;
+
+uint32_t uwCapture_high;
+uint32_t uwCapture_low;
+extern  uint32_t IcFreq;
+extern uint32_t DutyCycle;
+extern uint16_t Count;
+
+/*sensor variables*/
+uint32_t Counter_sensor = 0;
+uint8_t duty_flg_sensor = 0;
+extern  uint32_t Count_hi_sensor;
+extern  uint32_t Count_lo_sensor;
+uint32_t FirstRisingEdgeCount = 0; 	//counter value at input's first rising edge (beginning of period)
+uint32_t FallingEdgeCount = 0; 		//counter value at input's first falling edge
+uint32_t SecondRisingEdgeCount = 0; 	//counter value at input's second rising edge (end of period)
+uint16_t EdgePlace = 0; 		//indicator of place in input period
+uint32_t Counts_total = 0; 		//number of timer clock cycles in one input period
+uint32_t Counts_high = 0; 		//number of timer clock cycles the input was high
+uint32_t Counts_low = 0; 		//number of timer clock cycles the input was low
+uint32_t Frequency = 0; 		//Frequency of input (Hz)
+uint32_t DutyCycle_sensor = 0; 		//Duty Cycle of input (%)
+uint32_t PulseWidth_sensor= 0; 		//Pulse Width of input (us)
+  
+void SysTick_Handler(void)
+{
+   TimingDelay_Decrement();
+}
+
+void TIM2_IRQHandler(void)
+{
+ if(TIM_GetITStatus(TIM2, TIM_IT_CC3) == SET)
+ {
+  /* Clear TIM5 Capture compare interrupt pending bit */
+  TIM_ClearITPendingBit(TIM2, TIM_IT_CC3);
+  if(uhCaptureNumber == 0 )
+  {
+   /* Get the Input Capture value1 */
+   uhIC3ReadValue1 = TIM_GetCapture3(TIM2);
+   uhCaptureNumber = 1;
+  }
+  else if(uhCaptureNumber == 1 )
+  {
+   /* Get the Input Capture value2 */
+   uhIC3ReadValue2 = TIM_GetCapture3(TIM2);
+
+  /* Capture computation */
+  if (uhIC3ReadValue2 > uhIC3ReadValue1)
+  {
+   uwCapture = (uhIC3ReadValue2 - uhIC3ReadValue1);
+  }
+  
+  else if (uhIC3ReadValue2 < uhIC3ReadValue1)
+  {
+   uwCapture = ((0xFFFFFFFF - uhIC3ReadValue1) + uhIC3ReadValue2);
+  }
+  
+    /* Frequency computation */
+    IcFreq = (uint32_t) (SystemCoreClock / 2) / (uwCapture);
+    uhCaptureNumber = 0;
+ }
+ }
+}
+
+void TIM4_IRQHandler(void)
+{
+  if(TIM_GetITStatus(TIM4, TIM_IT_CC2) != RESET)
+  {
+    TIM_ClearITPendingBit(TIM4, TIM_IT_CC2); 
+    TIM4->CCR2 = Count * DutyCycle / 100; 
+  }
+  
+  if(TIM_GetITStatus(TIM4, TIM_IT_CC1) != RESET)
+  {
+    TIM_ClearITPendingBit(TIM4, TIM_IT_CC1); 
+    TIM4->CCR1 = Count * DutyCycle / 100; 
+  }
+}
+
+void TIM3_IRQHandler(void)
+{
+  /*For BUZZER*/
+ 
+  /* TIM5_CH3 toggling */
+  if (TIM_GetITStatus(TIM3, TIM_IT_CC1) != RESET)
+  {
+    /* Clear interrupt pending bit */ 
+    TIM_ClearITPendingBit(TIM3, TIM_IT_CC1);
+
+    /* Copy TIM5 counter value to Counter */ 
+    Counter = TIM_GetCapture1(TIM3);
+    
+      TIM_SetCompare1(TIM3, Counter + Count_hi);      
+      BuzzerFreq = ((SystemCoreClock /2) / (Count_hi + Count_lo));       
+  }
+}
+
+void TIM5_IRQHandler(void)
+{
+  /*For ultrasonic sensor*/
+ /* TIM5_CH3 toggling */
+  if (TIM_GetITStatus(TIM5, TIM_IT_CC3) != RESET)
+  {
+    /* Clear interrupt pending bit */ 
+    TIM_ClearITPendingBit(TIM5, TIM_IT_CC3);
+
+    /* Copy TIM5 counter value to Counter */ 
+    Counter_sensor = TIM_GetCapture3(TIM5);
+
+    if (duty_flg_sensor != 0)
+    {
+      TIM_SetCompare3(TIM5, Counter_sensor + Count_lo_sensor);
+      duty_flg_sensor = 0;
+    }
+
+    else
+    {
+      TIM_SetCompare3(TIM5, Counter_sensor + Count_hi_sensor);
+      duty_flg_sensor = 1;
+    }
+  }
+
+  if(TIM_GetITStatus(TIM5, TIM_IT_CC4) == SET)
+  {
+    /* Clear TIM5 Capture compare interrupt pending bit */
+    TIM_ClearITPendingBit(TIM5, TIM_IT_CC4);
+
+    /* Save the timer's counter value when the input turns high to FirstRisingEdgeCount */
+    if(EdgePlace == 0 && (GPIOA->IDR&GPIO_Pin_3))
+    {
+      /* Get the Input Capture value */
+      FirstRisingEdgeCount = TIM_GetCapture4(TIM5);
+      EdgePlace += 1;
+    }
+
+    /* Save the timer's counter value when the input turns low to FallingEdgeCount */
+    else if(EdgePlace == 1 )
+    {
+      /* Get the Input Capture value */
+      FallingEdgeCount = TIM_GetCapture4(TIM5);
+      EdgePlace += 1;
+    }
+
+    /* Save the timer's counter value when the input turns high again to SecondRisingEdgeCount */
+    else if(EdgePlace == 2 )
+    {
+      /* Capture computations for the number of clock cycles the input lasted and was high/low */
+      if (FallingEdgeCount > FirstRisingEdgeCount) //if there was no overlap
+      {
+        Counts_high = (FallingEdgeCount - FirstRisingEdgeCount);
+      }
+
+      else if (FallingEdgeCount < FirstRisingEdgeCount) //if there was overlap
+      {
+        Counts_high = ((0xFFFFFFFF - FirstRisingEdgeCount) + FallingEdgeCount);
+      }
+
+      PulseWidth_sensor=Counts_high/(SystemCoreClock/2000000);
+      EdgePlace = 0;
+    }
+  }
+}
